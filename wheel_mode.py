@@ -19,25 +19,15 @@ time.sleep(2)
 print('start')
 
 
-#default velocity limite is 350 or 80.15RPM
-#reboot(1)
+
 motor.motor_id = 1
 #motor.position_mode()
 motor.velocity_mode()
 motor.send_goal_RPM(80)
-#motor.send_read(0,)
 
-#LED_control('on')
 time.sleep(1)
 while True:
-    '''
-    motor.LED_control(1,0)
-    motor.send_goal_pos(1, 2048-1000)
-    time.sleep(1)
-    motor.LED_control(1, 1)
-    motor.send_goal_pos(1,2048+1000)
-    time.sleep(1)
-    '''
+
 
     value1 = motor.read_current_milliamp()
 

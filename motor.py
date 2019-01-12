@@ -1,9 +1,12 @@
 import serial
+import time
 import serial.tools.list_ports
 
 serial_port =  serial.Serial()
 
 motor_id = 1
+most_left_pos = -1044479
+most_right_pos = 1044479
 #######Protocol section#######
 operating_mode_dict = {
     'current_control':b'\x00',
@@ -33,11 +36,15 @@ control_dict = {
     'led' : 65,
     'goal_velocity' : 104,
     'present_velocity' : 128,
+    'present_position' : 132,
+    'homing_offset' : 20,
+
     'goal_pos' : 116,
     'torque_enable' : 64,
     'operating_mode' : 11,
     'present_current' : 126,
-    'version_of_firmware' : 6
+    'version_of_firmware' : 6,
+    'profile_velocity' : 112
 }
 def hex_print (b_data):
     print(' '.join([hex(b) for b in b_data]))
@@ -99,13 +106,15 @@ def packet_builder(id, inst, param):
     return packet
 
 def transceive_packer(send_packet):
+    #serial_port.flushInput()
+    #time.sleep(0.1)
     serial_port.write(send_packet)
     recieve_data = serial_port.read(7)
     try:
         length = recieve_data[5] |(recieve_data[6]<<8)
         recieve_data += serial_port.read(length)
-    except:
-        print('Serial Error')
+    except  Exception as e:
+        print('Serial Error,transceive_packet ,'+str(e))
         return None
     return recieve_data
 def return_pack_analyze(pack):
@@ -127,8 +136,10 @@ def return_pack_analyze(pack):
 def packet_error_check(pack):
     packet_header = b'\xff\xff\xfd\x00'
     if pack == None:
+        print('err,packet_error_check ,pack == None')
         return True
     if pack[0:4] != packet_header:
+        print('err,packet_error_check ,pack[0:4] != packet_header')
         return True
 
     length = pack[5] | (pack[6] << 8)
@@ -137,6 +148,7 @@ def packet_error_check(pack):
     pack_crc = pack[length+7-2:length+7]
     err = pack[8]
     if err != 0:
+        print('err,packet_error_check ,recieved err status')
         return True
     calc_crc = update_crc(0,pack)
     if pack_crc != calc_crc:
@@ -167,6 +179,8 @@ def send_read(id,addr,length):
 def read_reg(addr,length):
     status_pack = send_read(motor_id,addr,length)
     if packet_error_check(status_pack) == True:
+        print('err,read_reg')
+        print(status_pack)
         return None
     else:
 
@@ -174,13 +188,28 @@ def read_reg(addr,length):
 
         return status_pack[9:9+length]
 
-def read_int(addr,length):
+def read_int(addr,length,retry = 0):
     data = read_reg(addr,length)
     if data == None:
-        return None
+        if retry>3:
+            return None
+        else:
+            print('err,read_int, retry = ',retry)
+            time.sleep(0.5)
+            return read_int(addr,length,retry+1)
     else:
         return int.from_bytes(data, byteorder='little', signed=True)
-
+def read_uint(addr,length,retry = 0):
+    data = read_reg(addr,length)
+    if data == None:
+        if retry>3:
+            return None
+        else:
+            print('err,read_uint, retry = ',retry)
+            time.sleep(0.5)
+            return read_uint(addr,length,retry+1)
+    else:
+        return int.from_bytes(data, byteorder='little', signed=False)
 def LED_control(value):
     id = motor_id
     if type(id) is int:
@@ -207,11 +236,21 @@ def send_goal_pos(value):
         for i in range(4):
             b_value += bytes([(value>>(8*i))&0xff])
         value = b_value
-
-    #addr_L = bytes([control_dict['goal_pos'][0] & 0xff])
-    #addr_H = bytes([(control_dict['goal_pos'][0] >> 8) & 0xff])
-    #pack = packet_builder(id=id, inst=inst_dict['write'], param=addr_L + addr_H + value)
     return send_write(id, control_dict['goal_pos'], value)
+def send_homing_offset(value):#need to turn off motor before send this command
+    id = motor_id
+    if type(id) is int:
+        id = bytes([id])
+
+    if type(value) is int:
+        b_value = b''
+        for i in range(4):
+            b_value += bytes([(value>>(8*i))&0xff])
+        value = b_value
+    return send_write(id, control_dict['homing_offset'], value)
+def set_homing_offset(value):#need to turn off motor before send this command
+    motor_off()
+    send_homing_offset(value)
 def send_goal_velocity(value):
     id = motor_id
     if type(id) is int:
@@ -223,14 +262,27 @@ def send_goal_velocity(value):
         for i in range(4):
             b_value += bytes([(value>>(8*i))&0xff])
         value = b_value
-
-
     return send_write(id, control_dict['goal_velocity'], value)
 
 
 def send_goal_RPM(RPM):
     value = rpm_to_velocity(RPM)
     return send_goal_velocity(value)
+def send_profile_velocity(value):
+    id = motor_id
+    if type(id) is int:
+        id = bytes([id])
+
+    if type(value) is int:
+
+        b_value = b''
+        for i in range(4):
+            b_value += bytes([(value>>(8*i))&0xff])
+        value = b_value
+    return send_write(id, control_dict['profile_velocity'], value)
+
+def send_profile_rpm(value):
+    return send_profile_velocity(rpm_to_velocity(value))
 def velocity_mode():
     send_write(motor_id, control_dict['torque_enable'], b'\x00')
     send_write(motor_id, control_dict['operating_mode'], operating_mode_dict['velovity_control'])
@@ -239,8 +291,16 @@ def position_mode():
     send_write(motor_id, control_dict['torque_enable'], b'\x00')
     send_write(motor_id, control_dict['operating_mode'], operating_mode_dict['position_control'])
     send_write(motor_id, control_dict['torque_enable'], b'\x01')
-def read_velocity():
+def extended_position_mode():
+    send_write(motor_id, control_dict['torque_enable'], b'\x00')
+    send_write(motor_id, control_dict['operating_mode'], operating_mode_dict['extended_position_control'])
+    send_write(motor_id, control_dict['torque_enable'], b'\x01')
+def motor_off():
+    send_write(motor_id, control_dict['torque_enable'], b'\x00')
+def read_rpm():
     return velocity_to_rpm(read_int(control_dict['present_velocity'], 4))
+def read_position():
+    return read_int(control_dict['present_position'], 4)
 def read_current():#raw
     value = read_int(control_dict['present_current'],2)
     if value == None:
@@ -251,11 +311,26 @@ def read_current_milliamp():#mAh
     if value == None:
         return None
     return read_current()*2.69
-def motor_recovery():
-    pass
 
+def send_goal_degree(deg):
+    send_goal_pos(degree_to_position(deg))
 ### conversion ###
 def rpm_to_velocity(rpm):
     return int(rpm/0.229)
 def velocity_to_rpm(vel):
     return vel*0.229
+def degree_to_position(deg):
+    return int(deg/0.088)
+def move_pos(goal_pos):
+    tolerant = 2
+    send_goal_pos(goal_pos)
+    crr_pos = read_position()
+    if crr_pos == None:
+        print('err,move_pos,1')
+        return None
+    while abs(crr_pos-goal_pos) > tolerant:
+        crr_pos = read_position()
+        if crr_pos == None:
+            print('err,move_pos,2')
+            return None
+        #time.sleep(0.01)
