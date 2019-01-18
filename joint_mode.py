@@ -2,7 +2,7 @@ import motor
 import time
 while True:#Conecting Loop
 
-    motor.serial_port.port = 'COM6'
+    #motor.serial_port.port = '/dev/cu.wchusbserial1410'
     motor.serial_port.baudrate = 57600
     motor.serial_port.timeout = 1
     try:

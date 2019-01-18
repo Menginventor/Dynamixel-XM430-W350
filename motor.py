@@ -3,7 +3,7 @@ import time
 import serial.tools.list_ports
 
 serial_port =  serial.Serial()
-
+serial_port.port = '/dev/cu.wchusbserial1410'
 motor_id = 1
 most_left_pos = -1044479
 most_right_pos = 1044479
